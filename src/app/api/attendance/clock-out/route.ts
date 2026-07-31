@@ -33,8 +33,17 @@ export async function POST(req: NextRequest) {
     const totalHours = parseFloat((totalMinutes / 60).toFixed(2));
     const hour = getHours(now), minute = getMinutes(now);
 
-    // Leaving before 5:55 PM (17:55) or 6:00 PM
-    const isEarlyDeparture = hour < 17 || (hour === 17 && minute < 55) || isEarlyLeave;
+    // Clock-out opens at exactly 18:00 (6:00 PM)
+    const beforeClockOutWindow = hour < 18;
+    const isEarlyDeparture = beforeClockOutWindow || isEarlyLeave;
+
+    // Block clock-out entirely before 6:00 PM unless it's a flagged early-leave
+    if (beforeClockOutWindow && !isEarlyLeave) {
+      return Response.json(
+        { error: 'Clock-out opens at 6:00 PM. Use "Request Early Leave" to submit a Half Day request before then.' },
+        { status: 400 }
+      );
+    }
 
     let halfDayApproval: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' = 'NONE';
     let status = record.status;

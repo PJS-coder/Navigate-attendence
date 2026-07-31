@@ -63,13 +63,20 @@ export default function DashboardPage() {
   const isClockedIn   = !!(record?.clockIn && !record.clockOut);
   const isClockedOut  = !!(record?.clockIn && record.clockOut);
 
-  // Shift opens at 9:55 AM, regular clock-out unlocks after 5:55 PM (17:55)
-  const isShiftOpen   = currentHour > 9 || (currentHour === 9 && currentMinute >= 55);
-  const canClockOut   = currentHour > 17 || (currentHour === 17 && currentMinute >= 55);
+  // ── Time-gate helpers (all times in local/IST) ──────────────────────────
+  const nowTotalMin     = currentHour * 60 + currentMinute;
+  const isShiftOpen     = nowTotalMin >= 9 * 60 + 55;   // 09:55 — shift opens
+  const isHalfDayZone   = nowTotalMin >= 10 * 60 + 15;  // 10:15 — auto half-day
+  const isAbsentLocked  = nowTotalMin >= 14 * 60 + 15;  // 14:15 — too late to clock-in
+  const canClockOut     = currentHour >= 18;             // 18:00 — clock-out opens
 
   const handleClockIn = async () => {
     if (!isShiftOpen) {
-      toastError('Clock-in opens at 09:55 AM');
+      toastError('Shift opens at 09:55 AM. Please wait.');
+      return;
+    }
+    if (isAbsentLocked) {
+      toastError('Clock-in window closed at 2:15 PM. You are marked Absent for today.');
       return;
     }
     if (location.status === 'checking') {
@@ -106,7 +113,7 @@ export default function DashboardPage() {
 
   const handleClockOut = async () => {
     if (!canClockOut) {
-      toastError('Regular clock-out unlocks after 5:55 PM. Use "Request Early Leave" to apply for Half Day.');
+      toastError('Clock-out opens at 6:00 PM. Use "Request Early Leave" for an early exit.');
       return;
     }
 
@@ -312,15 +319,31 @@ export default function DashboardPage() {
           )
         ) : (
           <>
+            {/* Shift not yet open */}
             {!isShiftOpen && !isClockedIn && (
               <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1D4ED8', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>🔒</span> Next Shift Opens at 09:55 AM
+                <span>🔒</span> Shift Opens at 09:55 AM
               </div>
             )}
 
+            {/* Absent lock — after 2:15 PM */}
+            {isAbsentLocked && !isClockedIn && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', padding: '10px 18px', borderRadius: 20, fontSize: 12.5, fontWeight: 800, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>🚫</span> Clock-in closed at 2:15 PM — You are marked <span style={{ marginLeft: 4, background: '#DC2626', color: '#fff', borderRadius: 6, padding: '1px 7px', fontSize: 11 }}>ABSENT</span>
+              </div>
+            )}
+
+            {/* Half-day warning — 10:15 to 2:15 PM */}
+            {isShiftOpen && isHalfDayZone && !isAbsentLocked && !isClockedIn && (
+              <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#92400E', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>⚠️</span> After 10:15 AM — clocking in now will mark Half Day
+              </div>
+            )}
+
+            {/* Clock-out locked until 6 PM */}
             {isClockedIn && !canClockOut && (
               <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#B45309', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>🔒</span> Regular Clock Out After 5:55 PM
+                <span>🔒</span> Clock-Out Opens at 6:00 PM
               </div>
             )}
 
@@ -330,13 +353,16 @@ export default function DashboardPage() {
               disabled={
                 loading || actionLoading ||
                 (!isShiftOpen && !isClockedIn) ||
+                (isAbsentLocked && !isClockedIn) ||
                 (location.status === 'checking' && !isClockedIn) ||
                 (isClockedIn && !canClockOut)
               }
               title={
                 !isShiftOpen && !isClockedIn
-                  ? 'Clock-in disabled until 9:55 AM'
-                  : (isClockedIn && !canClockOut ? 'Use Request Early Leave button below to submit a Half Day request' : '')
+                  ? 'Shift opens at 09:55 AM'
+                  : isAbsentLocked && !isClockedIn
+                  ? 'Clock-in closed at 2:15 PM — marked Absent'
+                  : (isClockedIn && !canClockOut ? 'Clock-out opens at 6:00 PM. Use Request Early Leave for an early exit.' : '')
               }
             >
               {actionLoading ? (
