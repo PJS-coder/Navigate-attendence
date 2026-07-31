@@ -1,0 +1,100 @@
+// apps/api/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────
+// User
+// ─────────────────────────────────────────────────────────
+
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  password    String   // bcrypt hashed
+  name        String
+  role        Role     @default(EMPLOYEE)
+  hourlyRate  Float    @default(0)
+  officeSsid  String   // e.g. "CompanyOffice_5G"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  attendances Attendance[]
+  salaryRules SalaryRule?
+}
+
+// ─────────────────────────────────────────────────────────
+// Attendance
+// ─────────────────────────────────────────────────────────
+
+model Attendance {
+  id               String           @id @default(uuid())
+  userId           String
+  date             DateTime         @db.Date
+  clockIn          DateTime?
+  clockOut         DateTime?
+  totalHours       Float?
+  status           Status           @default(ABSENT)
+  isLate           Boolean          @default(false)
+  lateMinutes      Int              @default(0)
+  wifiVerified          Boolean          @default(false)
+  verificationMethod    String?                        // 'gps' | 'ip' | 'pending'
+  salesRevenue     Float            @default(0)
+  leadsAssigned    Int              @default(0)
+  halfDayApproval  HalfDayApproval  @default(NONE)
+  halfDayReason    String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId])
+  @@index([date])
+}
+
+// ─────────────────────────────────────────────────────────
+// Salary Rules
+// ─────────────────────────────────────────────────────────
+
+model SalaryRule {
+  id                  String @id @default(uuid())
+  userId              String @unique
+  baseSalary          Float  @default(0)
+  overtimeMultiplier  Float  @default(1.5)
+  latePenaltyPerMin   Float  @default(0)
+  officeStartTime     String @default("09:00") // "HH:mm" 24-hour
+  workingHoursPerDay  Float  @default(8.0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────
+
+enum Role {
+  EMPLOYEE
+  ADMIN
+}
+
+enum Status {
+  PRESENT
+  LATE
+  ABSENT
+  HALF_DAY
+}
+
+enum HalfDayApproval {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+}
