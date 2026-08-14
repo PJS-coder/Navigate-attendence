@@ -9,11 +9,11 @@ export default function SplashScreen() {
   const [mounted, setMounted] = useState(true);
 
   useEffect(() => {
-    // Hide splash after 1.2 seconds (1200ms)
+    // Hide splash after 400ms for instant, fast load
     const timer = setTimeout(() => {
       setVisible(false);
-      setTimeout(() => setMounted(false), 400); // Unmount after fade-out transition
-    }, 1200);
+      setTimeout(() => setMounted(false), 300); // Unmount after fade-out transition
+    }, 400);
 
     return () => clearTimeout(timer);
   }, []);

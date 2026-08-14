@@ -75,6 +75,11 @@ export default function TimesheetPage() {
     return map;
   }, [records]);
 
+  const todayObj = new Date();
+  const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+  const nowTotalMin = todayObj.getHours() * 60 + todayObj.getMinutes();
+  const isPast215PM = nowTotalMin >= 14 * 60 + 15;
+
   // Calendar Calculation
   const calendarDays = useMemo(() => {
     const daysInMonth = new Date(year, month, 0).getDate();
@@ -90,21 +95,58 @@ export default function TimesheetPage() {
     // Days 1..daysInMonth
     for (let d = 1; d <= daysInMonth; d++) {
       const dStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const dayDate = new Date(year, month - 1, d);
+      const isSunday = dayDate.getDay() === 0;
+
+      let rec = recordMap.get(dStr);
+
+      // Mark unclocked past working days (or today past 2:15 PM) as ABSENT
+      if (!rec && !isSunday) {
+        const isPast = dStr < todayStr;
+        const isTodayCutoff = dStr === todayStr && isPast215PM;
+
+        if (isPast || isTodayCutoff) {
+          rec = {
+            id: `auto-absent-${dStr}`,
+            userId: '',
+            date: dStr,
+            clockIn: null,
+            clockOut: null,
+            totalHours: 0,
+            status: 'ABSENT',
+            isLate: false,
+            lateMinutes: 0,
+            wifiVerified: false,
+            salesRevenue: 0,
+            halfDayApproval: 'NONE',
+          };
+        }
+      }
+
       days.push({
         day: d,
         dateStr: dStr,
-        record: recordMap.get(dStr),
+        record: rec,
       });
     }
 
     return days;
-  }, [year, month, recordMap]);
+  }, [year, month, recordMap, todayStr, isPast215PM]);
+
+  // Combined list of records including auto-absent days for table & legend
+  const effectiveRecords = useMemo(() => {
+    const list: AttendanceRecord[] = [];
+    calendarDays.forEach(cell => {
+      if (cell?.record) list.push(cell.record);
+    });
+    return list;
+  }, [calendarDays]);
 
   // Count totals for current month
-  const presentCount  = records.filter(r => r.status === 'PRESENT').length;
-  const lateCount     = records.filter(r => r.status === 'LATE').length;
-  const absentCount   = records.filter(r => r.status === 'ABSENT').length;
-  const halfDayCount  = records.filter(r => r.status === 'HALF_DAY').length;
+  const presentCount  = effectiveRecords.filter(r => r.status === 'PRESENT').length;
+  const lateCount     = effectiveRecords.filter(r => r.status === 'LATE').length;
+  const absentCount   = effectiveRecords.filter(r => r.status === 'ABSENT').length;
+  const halfDayCount  = effectiveRecords.filter(r => r.status === 'HALF_DAY').length;
 
   return (
     <div className="page">
@@ -194,10 +236,10 @@ export default function TimesheetPage() {
       {/* Attendance Log Table */}
       <div style={{ marginTop: 40 }}>
         <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 16 }}>
-          Monthly Records ({records.length})
+          Monthly Records ({effectiveRecords.length})
         </h2>
 
-        {records.length === 0 ? (
+        {effectiveRecords.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
             No attendance records found for {MONTHS[month - 1]} {year}.
           </div>
@@ -216,12 +258,12 @@ export default function TimesheetPage() {
                 </tr>
               </thead>
               <tbody>
-                {records.map(r => (
+                {effectiveRecords.map(r => (
                   <tr key={r.id}>
-                    <td style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{r.date}</td>
+                    <td style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{typeof r.date === 'string' ? r.date.split('T')[0] : r.date}</td>
                     <td>{fmtTime(r.clockIn)}</td>
                     <td>{fmtTime(r.clockOut)}</td>
-                    <td style={{ fontWeight: 800 }}>{r.totalHours != null ? `${r.totalHours}h` : '—'}</td>
+                    <td style={{ fontWeight: 800 }}>{r.totalHours != null && r.totalHours > 0 ? `${r.totalHours}h` : '—'}</td>
                     <td><span className={STATUS_BADGE[r.status]}>{STATUS_LABEL[r.status]}</span></td>
                     <td style={{ color: r.isLate ? '#D97706' : 'var(--text-muted)' }}>
                       {r.isLate ? `+${r.lateMinutes}m` : '—'}

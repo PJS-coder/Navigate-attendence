@@ -15,7 +15,7 @@ export default function HeaderNavbar() {
     ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '?';
 
-  const handleLogout = () => { logout(); router.push('/login'); };
+  const handleLogout = () => { logout(); router.replace('/login'); };
   // Do not render top header navbar on Admin portal (admin has dedicated executive sidebar & header bar)
   if (user?.role === 'ADMIN' || pathname.startsWith('/admin')) {
     return null;

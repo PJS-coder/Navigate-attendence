@@ -33,7 +33,7 @@ export default function LoginPage() {
       login(res.data.token, res.data.user);
       success(`Welcome back, ${res.data.user.name}! 👋`);
       const targetRoute = res.data.user.role === 'ADMIN' ? '/admin' : '/dashboard';
-      setTimeout(() => router.push(targetRoute), 400);
+      setTimeout(() => router.replace(targetRoute), 400);
     } catch (err) {
       toastError(extractError(err));
     } finally {

@@ -45,9 +45,9 @@ function toMinutes(h: number, m: number) { return h * 60 + m; }
 // ── Schema ────────────────────────────────────────────────────────────────────
 const Schema = z.object({
   timestamp: z.string().datetime(),
-  method: z.enum(['gps', 'pending']),
-  lat: z.number().optional(),
-  lng: z.number().optional(),
+  method: z.enum(['gps']),
+  lat: z.number({ required_error: 'GPS latitude is required' }),
+  lng: z.number({ required_error: 'GPS longitude is required' }),
 });
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const parsed = Schema.safeParse(body);
   if (!parsed.success) {
-    return Response.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 });
+    return Response.json({ error: 'Location verification failed. Valid GPS coordinates are required to clock in.', details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { timestamp, method, lat, lng } = parsed.data;
@@ -97,17 +97,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ── 3. Server-side GPS verification ───────────────────────────────────────
-  let verificationMethod: string = 'pending';
-  let wifiVerified = false;
-
-  if (method === 'gps' && lat !== undefined && lng !== undefined) {
-    const distance = haversineDistance(lat, lng, OFFICE_LAT, OFFICE_LNG);
-    if (distance <= OFFICE_RADIUS) {
-      verificationMethod = 'gps';
-      wifiVerified = true;
-    }
+  // ── 3. Server-side GPS radius verification ─────────────────────────────────
+  const distance = haversineDistance(lat, lng, OFFICE_LAT, OFFICE_LNG);
+  if (distance > OFFICE_RADIUS) {
+    return Response.json(
+      { error: `Clock-in failed: You are ${Math.round(distance)}m away from the office. You must be within ${OFFICE_RADIUS}m to clock in.` },
+      { status: 400 }
+    );
   }
+
+  const verificationMethod = 'gps';
+  const wifiVerified = true;
 
   // ── 4. Business logic ─────────────────────────────────────────────────────
   try {
@@ -132,9 +132,7 @@ export async function POST(req: NextRequest) {
     const relaxationDone = (totalPrevLate + lateMinutes) > 240;
 
     let status: 'PRESENT' | 'HALF_DAY' = 'PRESENT';
-    let message = verificationMethod === 'pending'
-      ? 'Clocked in — awaiting manager location approval ⏳'
-      : 'Clocked in on time ✓';
+    let message = 'Clocked in on time ✓';
 
     if (isHalfDay) {
       status  = 'HALF_DAY';
@@ -145,7 +143,6 @@ export async function POST(req: NextRequest) {
     } else if (lateMinutes > 0) {
       const remainMins = Math.max(0, 240 - (totalPrevLate + lateMinutes));
       message = `Late by ${lateMinutes}m — ${(remainMins / 60).toFixed(1)} hrs relaxation left`;
-      if (verificationMethod === 'pending') message += ' · awaiting location approval ⏳';
     }
 
     const attendance = await prisma.attendance.upsert({

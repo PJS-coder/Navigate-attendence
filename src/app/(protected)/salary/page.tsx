@@ -90,7 +90,7 @@ export default function SalaryPage() {
                 <span className="calc-label">full day :</span>
               </div>
               <div className="calc-value positive">
-                Rs. {breakdown.fullDayPay || 0}
+                Rs. {Math.max(0, breakdown.fullDayPay || 0)}
               </div>
             </div>
 
@@ -101,7 +101,7 @@ export default function SalaryPage() {
                 <span className="calc-label">half day :</span>
               </div>
               <div className="calc-value positive">
-                Rs. {breakdown.halfDayPay || 0}
+                Rs. {Math.max(0, breakdown.halfDayPay || 0)}
               </div>
             </div>
 
@@ -111,8 +111,8 @@ export default function SalaryPage() {
                 <span className="calc-icon">🌴</span>
                 <span className="calc-label">on leave :</span>
               </div>
-              <div className="calc-value leave">
-                Rs. -{breakdown.onLeaveDeduction || 0}
+              <div className={`calc-value ${breakdown.onLeaveDeduction > 0 ? 'leave' : 'positive'}`}>
+                {breakdown.onLeaveDeduction > 0 ? `Rs. -${Math.abs(breakdown.onLeaveDeduction)}` : 'Rs. 0'}
               </div>
             </div>
 

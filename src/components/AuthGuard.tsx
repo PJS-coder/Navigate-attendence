@@ -2,33 +2,43 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '../context/AuthContext';
 
 /**
- * Wraps protected pages. Redirects to /login if not authenticated.
- * Also supports adminOnly guard.
+ * Wraps protected pages. Strictly enforces role-based navigation:
+ * - Unauthenticated users -> /login
+ * - Admin users attempting employee routes (/dashboard, /timesheet, /salary) -> /admin
+ * - Employee users attempting /admin -> /dashboard
  */
 export default function AuthGuard({
   children,
-  adminOnly = false,
 }: {
   children: React.ReactNode;
-  adminOnly?: boolean;
 }) {
   const { isAuthenticated, user } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!isAuthenticated) {
       router.replace('/login');
-    } else if (adminOnly && user?.role !== 'ADMIN') {
+      return;
+    }
+
+    const isAdminRoute = pathname.startsWith('/admin');
+
+    if (user?.role === 'ADMIN' && !isAdminRoute) {
+      router.replace('/admin');
+    } else if (user?.role !== 'ADMIN' && isAdminRoute) {
       router.replace('/dashboard');
     }
-  }, [isAuthenticated, adminOnly, user, router]);
+  }, [isAuthenticated, user, pathname, router]);
 
   if (!isAuthenticated) return null;
-  if (adminOnly && user?.role !== 'ADMIN') return null;
+  const isAdminRoute = pathname.startsWith('/admin');
+  if (user?.role === 'ADMIN' && !isAdminRoute) return null;
+  if (user?.role !== 'ADMIN' && isAdminRoute) return null;
 
   return <>{children}</>;
 }

@@ -46,7 +46,16 @@ export async function calculateMonthlySalary(userId: string, year: number, month
     else { regularHours += regularLimit; overtimeHours += hours - regularLimit; }
   }
 
-  const onLeaveDays = Math.max(0, workingDaysInMonth - (fullDays + halfDays));
+  const now = new Date();
+  const isCurrentMonth = now.getFullYear() === year && (now.getMonth() + 1) === month;
+  const targetDayLimit  = isCurrentMonth ? Math.min(now.getDate(), totalDaysInMonth) : totalDaysInMonth;
+
+  let elapsedWorkingDays = 0;
+  for (let d = 1; d <= targetDayLimit; d++) {
+    if (new Date(year, month - 1, d).getDay() !== 0) elapsedWorkingDays++;
+  }
+
+  const onLeaveDays = Math.max(0, elapsedWorkingDays - (fullDays + halfDays));
   const fullDayPay = fullDays * dailyRate;
   const halfDayPay = halfDays * halfDayRate;
   const onLeaveDeduction = onLeaveDays * dailyRate;

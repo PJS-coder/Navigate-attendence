@@ -83,26 +83,24 @@ export default function DashboardPage() {
       toastError('Verifying your location, please wait…');
       return;
     }
-    // All statuses (gps_ok, ip_ok, pending) allow clock-in
-    // 'pending' creates a record that needs manager approval
+    if (!location.canClockIn || location.status !== 'gps_ok') {
+      toastError(location.label || 'You are outside office range. Clock-in is only allowed at the office.');
+      return;
+    }
+
     setAction(true);
     try {
       const payload: Record<string, unknown> = {
         timestamp: new Date().toISOString(),
-        method:    location.method ?? 'pending',
+        method:    'gps',
+        lat:       location.coords?.lat,
+        lng:       location.coords?.lng,
       };
-      if (location.method === 'gps' && location.coords) {
-        payload.lat = location.coords.lat;
-        payload.lng = location.coords.lng;
-      }
       const res = await api.post('/attendance/clock-in', payload);
       setRecord(res.data.attendance);
       success(res.data.message || 'Clocked In successfully!');
       if (res.data.attendance.isLate) {
         info(`⚠️ Marked Late by ${res.data.attendance.lateMinutes} minutes`);
-      }
-      if (res.data.verificationMethod === 'pending') {
-        info('📍 Location unverified — your manager will review this clock-in');
       }
     } catch (err) {
       toastError(extractError(err));
@@ -354,7 +352,7 @@ export default function DashboardPage() {
                 loading || actionLoading ||
                 (!isShiftOpen && !isClockedIn) ||
                 (isAbsentLocked && !isClockedIn) ||
-                (location.status === 'checking' && !isClockedIn) ||
+                (!isClockedIn && (!location.canClockIn || location.status !== 'gps_ok')) ||
                 (isClockedIn && !canClockOut)
               }
               title={
@@ -362,6 +360,8 @@ export default function DashboardPage() {
                   ? 'Shift opens at 09:55 AM'
                   : isAbsentLocked && !isClockedIn
                   ? 'Clock-in closed at 2:15 PM — marked Absent'
+                  : !isClockedIn && (!location.canClockIn || location.status !== 'gps_ok')
+                  ? location.label
                   : (isClockedIn && !canClockOut ? 'Clock-out opens at 6:00 PM. Use Request Early Leave for an early exit.' : '')
               }
             >
@@ -386,25 +386,20 @@ export default function DashboardPage() {
         {/* ── Location Verification Badge ─────────────────────────────── */}
         {(() => {
           const s = location.status;
-          const bgColor   = s === 'gps_ok'  ? '#ECFDF5'
-                          : s === 'pending' ? '#FFFBEB'
-                          : s === 'checking'? '#F8FAFC'
+          const bgColor   = s === 'gps_ok'       ? '#ECFDF5'
+                          : s === 'checking'     ? '#F8FAFC'
                           : '#FEF2F2';
-          const dotColor  = s === 'gps_ok'  ? '#059669'
-                          : s === 'pending' ? '#D97706'
-                          : s === 'checking'? '#94A3B8'
+          const dotColor  = s === 'gps_ok'       ? '#059669'
+                          : s === 'checking'     ? '#94A3B8'
                           : '#DC2626';
-          const dotShadow = s === 'gps_ok'  ? '0 0 0 3px rgba(5,150,105,0.2)'
-                          : s === 'pending' ? '0 0 0 3px rgba(217,119,6,0.2)'
-                          : s === 'checking'? '0 0 0 3px rgba(148,163,184,0.2)'
+          const dotShadow = s === 'gps_ok'       ? '0 0 0 3px rgba(5,150,105,0.2)'
+                          : s === 'checking'     ? '0 0 0 3px rgba(148,163,184,0.2)'
                           : '0 0 0 3px rgba(220,38,38,0.2)';
-          const borderColor = s === 'gps_ok'  ? '#A7F3D0'
-                            : s === 'pending' ? '#FDE68A'
-                            : s === 'checking'? '#E2E8F0'
+          const borderColor = s === 'gps_ok'     ? '#A7F3D0'
+                            : s === 'checking'   ? '#E2E8F0'
                             : '#FCA5A5';
-          const textColor = s === 'gps_ok'  ? '#047857'
-                          : s === 'pending' ? '#92400E'
-                          : s === 'checking'? '#64748B'
+          const textColor = s === 'gps_ok'       ? '#047857'
+                          : s === 'checking'     ? '#64748B'
                           : '#B91C1C';
 
           // Animated dot for checking state
@@ -465,16 +460,16 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              {/* Pending approval notice */}
-              {s === 'pending' && (
-                <span style={{ fontSize: 10.5, color: '#92400E', background: '#FEF3C7', padding: '3px 10px', borderRadius: 20, fontWeight: 700 }}>
-                  ⏳ Clock-in will be sent to manager for approval
+              {/* Out of range / error notice */}
+              {(s === 'out_of_range' || s === 'error') && !isClockedIn && (
+                <span style={{ fontSize: 10.5, color: '#991B1B', background: '#FEE2E2', padding: '3px 12px', borderRadius: 20, fontWeight: 700 }}>
+                  🚫 You must be inside the office location range to clock in
                 </span>
               )}
 
               {/* GPS distance sub-label */}
               {s === 'gps_ok' && location.distanceMeters !== null && (
-                <span style={{ fontSize: 10, color: '#6EE7B7', letterSpacing: 0.3, fontWeight: 700 }}>
+                <span style={{ fontSize: 10, color: '#059669', letterSpacing: 0.3, fontWeight: 700 }}>
                   {location.distanceMeters}m from office · GPS verified
                 </span>
               )}
