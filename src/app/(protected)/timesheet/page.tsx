@@ -217,10 +217,18 @@ export default function TimesheetPage() {
                 {rec && (
                   <div className="day-status-box">
                     <span className={`status-pill ${rec.status.toLowerCase()}`}>
-                      {rec.status === 'PRESENT' && '✅ Present'}
-                      {rec.status === 'LATE' && '⏰ Late'}
-                      {rec.status === 'ABSENT' && '❌ Absent'}
-                      {rec.status === 'HALF_DAY' && '🌓 Half Day'}
+                      <span className="status-icon">
+                        {rec.status === 'PRESENT' && '✅'}
+                        {rec.status === 'LATE' && '⏰'}
+                        {rec.status === 'ABSENT' && '❌'}
+                        {rec.status === 'HALF_DAY' && '🌓'}
+                      </span>
+                      <span className="status-text">
+                        {rec.status === 'PRESENT' && ' Present'}
+                        {rec.status === 'LATE' && ' Late'}
+                        {rec.status === 'ABSENT' && ' Absent'}
+                        {rec.status === 'HALF_DAY' && ' Half Day'}
+                      </span>
                     </span>
                     <div className="day-time">
                       {fmtTime(rec.clockIn)} - {fmtTime(rec.clockOut)}

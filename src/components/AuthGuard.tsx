@@ -6,10 +6,10 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '../context/AuthContext';
 
 /**
- * Wraps protected pages. Strictly enforces role-based navigation:
+ * Wraps protected pages. Ensures authentication and guards admin routes:
  * - Unauthenticated users -> /login
- * - Admin users attempting employee routes (/dashboard, /timesheet, /salary) -> /admin
- * - Employee users attempting /admin -> /dashboard
+ * - Non-admin users attempting /admin -> /dashboard
+ * - Admin users have access to all routes (/admin, /dashboard, /timesheet, /salary)
  */
 export default function AuthGuard({
   children,
@@ -28,16 +28,13 @@ export default function AuthGuard({
 
     const isAdminRoute = pathname.startsWith('/admin');
 
-    if (user?.role === 'ADMIN' && !isAdminRoute) {
-      router.replace('/admin');
-    } else if (user?.role !== 'ADMIN' && isAdminRoute) {
+    if (user?.role !== 'ADMIN' && isAdminRoute) {
       router.replace('/dashboard');
     }
   }, [isAuthenticated, user, pathname, router]);
 
   if (!isAuthenticated) return null;
   const isAdminRoute = pathname.startsWith('/admin');
-  if (user?.role === 'ADMIN' && !isAdminRoute) return null;
   if (user?.role !== 'ADMIN' && isAdminRoute) return null;
 
   return <>{children}</>;

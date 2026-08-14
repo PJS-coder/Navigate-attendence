@@ -5,7 +5,7 @@ import { AuthProvider } from '../context/AuthContext';
 import SplashScreen from '../components/SplashScreen';
 
 export const viewport: Viewport = {
-  themeColor: '#4F46E5',
+  themeColor: '#000000',
   width: 'device-width',
   initialScale: 1,
 };
@@ -16,16 +16,19 @@ export const metadata: Metadata = {
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'default',
+    statusBarStyle: 'black-translucent',
     title: 'Navigate Skill',
   },
   icons: {
     icon: [
       { url: '/favicon-16.png', sizes: '16x16', type: 'image/png' },
       { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
-      { url: '/navigate.png',   sizes: 'any',   type: 'image/png' },
+      { url: '/icon-192.png',   sizes: '192x192', type: 'image/png' },
+      { url: '/navigate.png',   sizes: '512x512', type: 'image/png' },
     ],
-    apple: { url: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
+    apple: [
+      { url: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
+    ],
     shortcut: '/navigate.png',
   },
 };
