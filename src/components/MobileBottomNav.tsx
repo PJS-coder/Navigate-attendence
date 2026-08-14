@@ -69,7 +69,9 @@ export default function MobileBottomNav() {
               href={item.href}
               className={`mobile-bottom-tab${isActive ? ' active' : ''}`}
             >
-              <span className="mobile-tab-icon">{item.icon}</span>
+              <div className="mobile-tab-icon-wrapper">
+                <span className="mobile-tab-icon">{item.icon}</span>
+              </div>
               <span className="mobile-tab-label">{item.label}</span>
             </Link>
           );
