@@ -173,102 +173,53 @@ export default function DashboardPage() {
     <div className="page">
       <ToastContainer />
 
-      {/* ── Persistent Location Permission Warning ──────────────────────────
-           Shown ONLY when the user has explicitly denied location access.
-           Cannot be dismissed — disappears automatically when permission is granted. */}
+      {/* ── Centered Location Permission Modal Popup ────────────────────────── */}
       {location.gpsPermission === 'denied' && (
         <div
-          role="alert"
-          aria-live="assertive"
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            zIndex: 9999,
-            background: 'linear-gradient(90deg, #7F1D1D 0%, #991B1B 100%)',
-            color: '#FEF2F2',
-            padding: '14px 20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            boxShadow: '0 4px 20px rgba(127,29,29,0.45)',
-            borderBottom: '2px solid #DC2626',
-          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="location-modal-title"
+          className="location-modal-backdrop"
         >
-          {/* Warning icon */}
-          <svg
-            width="22" height="22" viewBox="0 0 24 24" fill="none"
-            stroke="#FCA5A5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            style={{ flexShrink: 0 }}
-          >
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-            <line x1="12" y1="9" x2="12" y2="13"/>
-            <line x1="12" y1="17" x2="12.01" y2="17"/>
-          </svg>
-
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 13.5, letterSpacing: 0.2 }}>
-              📍 Location Access Blocked
+          <div className="location-modal-card">
+            {/* Location Icon Badge */}
+            <div className="location-modal-icon-badge">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
             </div>
-            <div style={{ fontSize: 12, color: '#FECACA', marginTop: 2, lineHeight: 1.5 }}>
-              GPS verification requires location permission. Open your browser settings, allow location for this site, then click&nbsp;
-              <strong style={{ color: '#FEF2F2' }}>Refresh</strong> below.
-            </div>
-          </div>
 
-          {/* How-to steps */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-            flexWrap: 'wrap', justifyContent: 'flex-end',
-          }}>
-            {/* Browser-specific hint */}
-            <span style={{
-              background: 'rgba(255,255,255,0.12)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              borderRadius: 20,
-              padding: '4px 12px',
-              fontSize: 11.5,
-              fontWeight: 700,
-              whiteSpace: 'nowrap',
-            }}>
-              🔒 Click the lock icon in the address bar → Allow Location
-            </span>
+            <h3 id="location-modal-title" className="location-modal-title">
+              Turn On Location Access
+            </h3>
 
-            {/* Manual refresh trigger */}
+            <p className="location-modal-desc">
+              GPS verification is required to clock in & out for your shift. Please turn on location access to continue.
+            </p>
+
+            {/* Turn On Location Button */}
             <button
               onClick={location.refresh}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 20,
-                background: '#DC2626',
-                border: '1.5px solid #EF4444',
-                color: '#FEF2F2',
-                fontWeight: 800,
-                fontSize: 12,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                transition: 'background 0.2s ease',
-                whiteSpace: 'nowrap',
-              }}
-              title="Re-check location after enabling permission"
+              className="location-modal-btn"
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2.8"
-                strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21.5 2v6h-6M2.5 22v-6h6"/>
-                <path d="M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8M22 12.5a10 10 0 0 1-18.8 4.2L2.5 16"/>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                <circle cx="12" cy="10" r="3"/>
               </svg>
-              Refresh
+              Turn On Location
             </button>
+
+            {/* Browser Step Hint */}
+            <div className="location-modal-hint">
+              🔒 If blocked: Tap lock icon in address bar → Allow Location
+            </div>
           </div>
         </div>
       )}
 
       {/* Main Full Page Card */}
-      <div className="fullpage-clock-card" style={location.gpsPermission === 'denied' ? { marginTop: 90 } : undefined}>
+      <div className="fullpage-clock-card">
         
         {/* Top Time & Date */}
         <div className="clock-time-display">{currentTime || '09:55'}</div>
