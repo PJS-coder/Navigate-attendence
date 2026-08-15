@@ -8,7 +8,7 @@ export interface JWTPayload {
 }
 
 const JWT_SECRET = process.env.JWT_SECRET as string;
-const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN ?? '24h') as SignOptions['expiresIn'];
+const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN ?? '15d') as SignOptions['expiresIn'];
 
 export function signToken(payload: { userId: string; email: string; role: string }): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });

@@ -73,7 +73,7 @@ export default function SalaryPage() {
           <p style={{ marginTop: 12, color: 'var(--text-muted)', fontSize: 14 }}>Calculating statement...</p>
         </div>
       ) : breakdown ? (
-        <div className="salary-statement-container" style={{ maxWidth: 760, margin: '0 auto' }}>
+        <div className="salary-statement-container">
           
           {/* 1. Big Purple Hero Box for Amount Only */}
           <div className="salary-big-hero-box">

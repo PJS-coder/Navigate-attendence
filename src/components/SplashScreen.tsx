@@ -22,11 +22,10 @@ export default function SplashScreen() {
 
   return (
     <div className={`splash-overlay ${visible ? 'fade-in' : 'fade-out'}`}>
-      {/* Top Right Curved Background Shape */}
-      <div className="splash-shape-top-right" />
-
-      {/* Bottom Left Curved Background Shape */}
-      <div className="splash-shape-bottom-left" />
+      {/* ── Organic Royal Blue Corner Blob Shapes (Matching Reference Design) ── */}
+      <div className="blob-shape top-right" />
+      <div className="blob-shape mid-left" />
+      <div className="blob-shape bottom-right" />
 
       {/* Center Content */}
       <div className="splash-center-box">

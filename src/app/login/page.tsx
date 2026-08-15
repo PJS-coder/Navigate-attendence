@@ -46,6 +46,11 @@ export default function LoginPage() {
     <div className="catrider-login-page">
       <ToastContainer />
 
+      {/* ── Organic Royal Blue Corner Blob Shapes (Matching Reference Design) ── */}
+      <div className="blob-shape top-right" />
+      <div className="blob-shape mid-left" />
+      <div className="blob-shape bottom-right" />
+
       {/* Main Login Center Layout */}
       <div className="catrider-card-wrapper">
         
