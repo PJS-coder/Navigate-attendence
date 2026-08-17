@@ -60,16 +60,27 @@ export function useLocationVerification(): LocationVerificationResult {
     }
 
     // 1. Fetch office GPS coordinates (cached after first fetch)
+    const defaultOffice = { lat: 28.709200, lng: 77.123309, radiusMeters: 150 };
     if (!officeCoordsRef.current) {
       try {
         const res  = await fetch('/api/location/verify');
         const data = await res.json();
         if (data.office) officeCoordsRef.current = data.office;
       } catch {
-        officeCoordsRef.current = { lat: 28.6345, lng: 77.285549, radiusMeters: 150 };
+        officeCoordsRef.current = defaultOffice;
       }
     }
-    const officeCoords = officeCoordsRef.current || { lat: 28.6345, lng: 77.285549, radiusMeters: 150 };
+    const officeCoords = officeCoordsRef.current || defaultOffice;
+
+    // Check secure context for mobile devices over HTTP IP
+    if (typeof window !== 'undefined' && !window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      setGpsPermission('unsupported');
+      setStatus('error');
+      setMethod(null);
+      setLabel('⚠️ GPS requires HTTPS or localhost on mobile browsers');
+      isVerifyingRef.current = false;
+      return;
+    }
 
     // 2. Query GPS
     const gpsSupported = typeof navigator !== 'undefined' && 'geolocation' in navigator;

@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import { differenceInMinutes, parseISO, startOfDay, getHours, getMinutes } from 'date-fns';
+import { differenceInMinutes, parseISO } from 'date-fns';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, unauthorized } from '@/lib/auth';
+import { getTodayISTDate, getISTTimeParts } from '@/lib/dateUtils';
 
 const Schema = z.object({
   timestamp: z.string().datetime(),
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
   const userId = authUser.userId;
   const { timestamp, salesRevenue, leadsAssigned, isEarlyLeave, reason } = parsed.data;
   const now = parseISO(timestamp);
-  const today = startOfDay(now);
+  const today = getTodayISTDate(now);
 
   try {
     const record = await prisma.attendance.findUnique({ where: { userId_date: { userId, date: today } } });
@@ -31,9 +32,9 @@ export async function POST(req: NextRequest) {
 
     const totalMinutes = differenceInMinutes(now, record.clockIn);
     const totalHours = parseFloat((totalMinutes / 60).toFixed(2));
-    const hour = getHours(now), minute = getMinutes(now);
+    const { hour } = getISTTimeParts(now);
 
-    // Clock-out opens at exactly 18:00 (6:00 PM)
+    // Clock-out opens at exactly 18:00 (6:00 PM IST)
     const beforeClockOutWindow = hour < 18;
     const isEarlyDeparture = beforeClockOutWindow || isEarlyLeave;
 

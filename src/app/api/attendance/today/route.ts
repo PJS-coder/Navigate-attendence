@@ -1,17 +1,15 @@
 import { NextRequest } from 'next/server';
-import { startOfDay, getHours, getMinutes } from 'date-fns';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, unauthorized } from '@/lib/auth';
+import { getTodayISTDate, getISTTimeParts } from '@/lib/dateUtils';
 
 export async function GET(req: NextRequest) {
   const user = getAuthUser(req);
   if (!user) return unauthorized();
 
   const now = new Date();
-  const today = startOfDay(now);
-  const currentHour = getHours(now);
-  const currentMinute = getMinutes(now);
-  const totalMinutes = currentHour * 60 + currentMinute;
+  const today = getTodayISTDate(now);
+  const { hour: currentHour, totalMinutes } = getISTTimeParts(now);
 
   try {
     let attendance = await prisma.attendance.findUnique({

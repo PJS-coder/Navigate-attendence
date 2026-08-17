@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
-import { startOfMonth, endOfMonth } from 'date-fns';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, unauthorized } from '@/lib/auth';
+import { getMonthBounds } from '@/lib/dateUtils';
 
 export async function GET(req: NextRequest) {
   const user = getAuthUser(req);
@@ -13,8 +13,7 @@ export async function GET(req: NextRequest) {
   const page  = Math.max(1, parseInt(sp.get('page')  ?? '1', 10));
   const limit = Math.min(100, parseInt(sp.get('limit') ?? '31', 10));
 
-  const start = startOfMonth(new Date(year, month - 1));
-  const end   = endOfMonth(new Date(year, month - 1));
+  const { start, end } = getMonthBounds(year, month);
 
   try {
     const [records, total] = await Promise.all([

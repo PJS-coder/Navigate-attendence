@@ -2,11 +2,11 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import {
   differenceInMinutes, parseISO, set,
-  startOfDay, startOfMonth, endOfMonth,
-  getHours, getMinutes,
+  startOfMonth, endOfMonth,
 } from 'date-fns';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, unauthorized } from '@/lib/auth';
+import { getTodayISTDate, getISTTimeParts } from '@/lib/dateUtils';
 
 /**
  * POST /api/attendance/clock-in
@@ -63,11 +63,9 @@ export async function POST(req: NextRequest) {
 
   const { timestamp, method, lat, lng } = parsed.data;
   const now   = parseISO(timestamp);
-  const today = startOfDay(now);
+  const today = getTodayISTDate(now);
 
-  const hour   = getHours(now);
-  const minute = getMinutes(now);
-  const nowMin = toMinutes(hour, minute);
+  const { totalMinutes: nowMin } = getISTTimeParts(now);
 
   // ── 1. Shift window gate ───────────────────────────────────────────────────
   if (nowMin < toMinutes(SHIFT_OPEN.h, SHIFT_OPEN.m)) {
