@@ -11,8 +11,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ user
   const year  = parseInt(sp.get('year')  ?? String(new Date().getFullYear()), 10);
   const month = parseInt(sp.get('month') ?? String(new Date().getMonth() + 1), 10);
   try {
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
     const records = await prisma.attendance.findMany({
-      where: { userId, date: { gte: new Date(year, month - 1, 1), lte: new Date(year, month, 0) } },
+      where: { userId, date: { gte: start, lte: end } },
       orderBy: { date: 'asc' },
     });
     return Response.json({ success: true, data: records });

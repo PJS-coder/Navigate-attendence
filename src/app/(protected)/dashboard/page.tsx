@@ -9,7 +9,7 @@ import { useLocationVerification } from '../../../hooks/useLocationVerification'
 import { AttendanceRecord } from '../../../types';
 
 const formatTime = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
+  iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -23,20 +23,22 @@ export default function DashboardPage() {
   const [currentHour, setCurrentHour] = useState<number>(0);
   const [currentMinute, setCurrentMinute] = useState<number>(0);
 
-  // ── GPS Geofencing + IP Whitelist verification ───────────────────────────
+  // ── GPS Geofencing verification ───────────────────────────
   const location = useLocationVerification();
 
   // Inline Sales & Leads Assigned state
   const [salesRevenue, setSalesRevenue] = useState<string>('');
   const [leadsAssigned, setLeadsAssigned] = useState<string>('');
   const [earlyLeaveReason, setEarlyLeaveReason] = useState<string>('');
+  const [lateClockInReason, setLateClockInReason] = useState<string>('');
   const [showEarlyLeaveModal, setShowEarlyLeaveModal] = useState(false);
+  const [showLateClockInModal, setShowLateClockInModal] = useState(false);
 
   // Live time clock
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
-      setCurrentTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+      setCurrentTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }));
       setCurrentDate(now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }));
       setCurrentHour(now.getHours());
       setCurrentMinute(now.getMinutes());
@@ -63,20 +65,21 @@ export default function DashboardPage() {
   const isClockedIn   = !!(record?.clockIn && !record.clockOut);
   const isClockedOut  = !!(record?.clockIn && record.clockOut);
 
-  // ── Time-gate helpers (all times in local/IST) ──────────────────────────
+  // ── Time-gate helpers (IST / Local) ──────────────────────────
   const nowTotalMin     = currentHour * 60 + currentMinute;
-  const isShiftOpen     = nowTotalMin >= 9 * 60 + 55;   // 09:55 — shift opens
-  const isHalfDayZone   = nowTotalMin >= 10 * 60 + 15;  // 10:15 — auto half-day
-  const isAbsentLocked  = nowTotalMin >= 14 * 60 + 15;  // 14:15 — too late to clock-in
-  const canClockOut     = currentHour >= 18;             // 18:00 — clock-out opens
+  const isShiftOpen     = nowTotalMin >= 9 * 60 + 55;                          // 09:55 AM — shift opens
+  const isOnTimeClockIn = isShiftOpen && nowTotalMin < 10 * 60 + 30;           // 09:55 – 10:30 AM (PRESENT)
+  const isHalfDayZone   = nowTotalMin >= 10 * 60 + 30 && nowTotalMin < 11 * 60; // 10:30 – 11:00 AM (HALF_DAY)
+  const isAfterEleven   = nowTotalMin >= 11 * 60;                              // After 11:00 AM (Requires Approval)
 
-  const handleClockIn = async () => {
+  // Evening clock-out helpers
+  const canClockOutRegular = nowTotalMin >= 18 * 60 + 45 && nowTotalMin <= 19 * 60 + 15; // 06:45 PM – 07:15 PM
+  const isBeforeClockOut   = nowTotalMin < 18 * 60 + 45;                                 // Before 06:45 PM
+  const isAfterClockOut    = nowTotalMin > 19 * 60 + 15;                                 // After 07:15 PM (Late Clock-Out Approval)
+
+  const handleClockInClick = () => {
     if (!isShiftOpen) {
-      toastError('Shift opens at 09:55 AM. Please wait.');
-      return;
-    }
-    if (isAbsentLocked) {
-      toastError('Clock-in window closed at 2:15 PM. You are marked Absent for today.');
+      toastError('Shift opens at 09:55 AM. You cannot clock in yet.');
       return;
     }
     if (location.status === 'checking') {
@@ -88,6 +91,16 @@ export default function DashboardPage() {
       return;
     }
 
+    if (isAfterEleven) {
+      // Prompt modal for reason after 11:00 AM
+      setShowLateClockInModal(true);
+      return;
+    }
+
+    executeClockIn();
+  };
+
+  const executeClockIn = async (reason?: string) => {
     setAction(true);
     try {
       const payload: Record<string, unknown> = {
@@ -95,12 +108,16 @@ export default function DashboardPage() {
         method:    'gps',
         lat:       location.coords?.lat,
         lng:       location.coords?.lng,
+        reason:    reason || undefined,
       };
       const res = await api.post('/attendance/clock-in', payload);
       setRecord(res.data.attendance);
-      success(res.data.message || 'Clocked In successfully!');
-      if (res.data.attendance.isLate) {
-        info(`⚠️ Marked Late by ${res.data.attendance.lateMinutes} minutes`);
+      setShowLateClockInModal(false);
+
+      if (res.data.pendingApproval) {
+        info('Clock-in request submitted to Manager for approval (After 11:00 AM)!');
+      } else {
+        success(res.data.message || 'Clocked In successfully!');
       }
     } catch (err) {
       toastError(extractError(err));
@@ -110,8 +127,8 @@ export default function DashboardPage() {
   };
 
   const handleClockOut = async () => {
-    if (!canClockOut) {
-      toastError('Clock-out opens at 6:00 PM. Use "Request Early Leave" for an early exit.');
+    if (isBeforeClockOut) {
+      toastError('Clock-out opens at 06:45 PM. Use "Request Early Leave" to submit before then.');
       return;
     }
 
@@ -132,7 +149,12 @@ export default function DashboardPage() {
         leadsAssigned: validLeads,
       });
       setRecord(res.data.attendance);
-      success(res.data.message || `Clocked Out successfully! Sales: ₹${revNum}`);
+
+      if (res.data.isLateClockOut) {
+        info('Clock-out after 7:15 PM submitted for Manager approval!');
+      } else {
+        success(res.data.message || `Clocked Out successfully! Sales: ₹${revNum}`);
+      }
     } catch (err) {
       toastError(extractError(err));
     } finally {
@@ -157,11 +179,11 @@ export default function DashboardPage() {
         salesRevenue: revNum,
         leadsAssigned: validLeads,
         isEarlyLeave: true,
-        reason: earlyLeaveReason || 'Early Leave request before 6:00 PM',
+        reason: earlyLeaveReason || 'Early Leave request before 06:45 PM',
       });
       setRecord(res.data.attendance);
       setShowEarlyLeaveModal(false);
-      success('Early Leave Request submitted to Admin Panel!');
+      success('Early Leave Request submitted to Manager Portal!');
     } catch (err) {
       toastError(extractError(err));
     } finally {
@@ -182,7 +204,6 @@ export default function DashboardPage() {
           className="location-modal-backdrop"
         >
           <div className="location-modal-card">
-            {/* Location Icon Badge */}
             <div className="location-modal-icon-badge">
               <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
@@ -198,7 +219,6 @@ export default function DashboardPage() {
               GPS verification is required to clock in & out for your shift. Please turn on location access to continue.
             </p>
 
-            {/* Turn On Location Button */}
             <button
               onClick={location.refresh}
               className="location-modal-btn"
@@ -210,7 +230,6 @@ export default function DashboardPage() {
               Turn On Location
             </button>
 
-            {/* Browser Step Hint */}
             <div className="location-modal-hint">
               🔒 If blocked: Tap lock icon in address bar → Allow Location
             </div>
@@ -222,7 +241,7 @@ export default function DashboardPage() {
       <div className="fullpage-clock-card">
         
         {/* Top Time & Date */}
-        <div className="clock-time-display">{currentTime || '09:55'}</div>
+        <div className="clock-time-display">{currentTime || '09:55 AM'}</div>
         <div className="clock-date-display">{currentDate || 'Wednesday, Dec 12'}</div>
 
         {/* Attendance Completed or Center Orb Button */}
@@ -236,12 +255,12 @@ export default function DashboardPage() {
                     <polyline points="12 6 12 12 16 14"/>
                   </svg>
                 </div>
-                <span className="completed-badge-title pending-title">PENDING APPROVAL</span>
+                <span className="completed-badge-title pending-title">PENDING MANAGER APPROVAL</span>
                 <p style={{ fontSize: 13, color: '#92400E', fontWeight: 600, marginTop: 4 }}>
-                  Early leave request submitted to Admin
+                  {record.halfDayReason || 'Request submitted to Manager'}
                 </p>
                 <p style={{ fontSize: 11.5, color: '#B45309', fontWeight: 500, marginTop: 2 }}>
-                  Awaiting Admin response. Unapproved requests after 6 PM will be marked Absent.
+                  Awaiting Manager review. If approved, shift will be recorded; if rejected, marked Absent.
                 </p>
               </div>
             </div>
@@ -255,79 +274,111 @@ export default function DashboardPage() {
                 </div>
                 <span className="completed-badge-title">
                   {record?.status === 'HALF_DAY'
-                    ? 'HALF DAY (APPROVED)'
+                    ? 'HALF DAY'
                     : record?.status === 'ABSENT'
                     ? 'ABSENT'
                     : 'DAY COMPLETED'}
                 </span>
                 <p style={{ fontSize: 13, color: '#64748B', fontWeight: 600, marginTop: 4 }}>
-                  Next shift opens tomorrow at 09:55 AM
+                  Shift ended. Next shift opens tomorrow at 09:55 AM
                 </p>
               </div>
             </div>
           )
-        ) : (
+        ) : isClockedIn && record?.halfDayApproval === 'PENDING' ? (
+          <div className="completed-attendance-wrapper" style={{ margin: '14px 0' }}>
+            <div className="completed-orb-badge pending-approval-orb" style={{ padding: '16px 20px' }}>
+              <span className="completed-badge-title pending-title" style={{ fontSize: 14 }}>
+                ⏳ LATE CLOCK-IN PENDING MANAGER APPROVAL
+              </span>
+              <p style={{ fontSize: 12.5, color: '#92400E', fontWeight: 600, marginTop: 3 }}>
+                Clocked in after 11:00 AM. Awaiting Manager confirmation.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {!isClockedOut && (
           <>
-            {/* Shift not yet open */}
+            {/* Shift not yet open (< 9:55 AM) */}
             {!isShiftOpen && !isClockedIn && (
               <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1D4ED8', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span>🔒</span> Shift Opens at 09:55 AM
               </div>
             )}
 
-            {/* Absent lock — after 2:15 PM */}
-            {isAbsentLocked && !isClockedIn && (
-              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', padding: '10px 18px', borderRadius: 20, fontSize: 12.5, fontWeight: 800, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>🚫</span> Clock-in closed at 2:15 PM — You are marked <span style={{ marginLeft: 4, background: '#DC2626', color: '#fff', borderRadius: 6, padding: '1px 7px', fontSize: 11 }}>ABSENT</span>
+            {/* On-Time Clock In Window (9:55 AM – 10:30 AM) */}
+            {isShiftOpen && isOnTimeClockIn && !isClockedIn && (
+              <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>🟢</span> On-Time Clock-in Window (09:55 AM – 10:30 AM)
               </div>
             )}
 
-            {/* Half-day warning — 10:15 to 2:15 PM */}
-            {isShiftOpen && isHalfDayZone && !isAbsentLocked && !isClockedIn && (
+            {/* Half-day warning (10:30 AM – 11:00 AM) */}
+            {isShiftOpen && isHalfDayZone && !isClockedIn && (
               <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#92400E', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>⚠️</span> After 10:15 AM — clocking in now will mark Half Day
+                <span>⚠️</span> After 10:30 AM — Clocking in now will mark Half Day
               </div>
             )}
 
-            {/* Clock-out locked until 6 PM */}
-            {isClockedIn && !canClockOut && (
+            {/* After 11:00 AM — Approval warning */}
+            {isShiftOpen && isAfterEleven && !isClockedIn && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>⚠️</span> After 11:00 AM — Clock-in requires Manager Approval
+              </div>
+            )}
+
+            {/* Clock-out timing notifications when clocked in */}
+            {isClockedIn && isBeforeClockOut && (
               <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#B45309', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>🔒</span> Clock-Out Opens at 6:00 PM
+                <span>🔒</span> Clock-Out Opens at 06:45 PM
+              </div>
+            )}
+
+            {isClockedIn && canClockOutRegular && (
+              <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>🟢</span> Clock-Out Window Active (06:45 PM – 07:15 PM)
+              </div>
+            )}
+
+            {isClockedIn && isAfterClockOut && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', padding: '8px 16px', borderRadius: 20, fontSize: 12.5, fontWeight: 700, margin: '16px auto -10px', width: 'fit-content', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>⚠️</span> After 07:15 PM — Clock-out will send Approval to Manager
               </div>
             )}
 
             <button
               className={`center-orb-button ${isClockedIn ? 'clock-out' : ''}`}
-              onClick={isClockedIn ? handleClockOut : handleClockIn}
+              onClick={isClockedIn ? handleClockOut : handleClockInClick}
               disabled={
                 loading || actionLoading ||
                 (!isShiftOpen && !isClockedIn) ||
-                (isAbsentLocked && !isClockedIn) ||
                 (!isClockedIn && (!location.canClockIn || location.status !== 'gps_ok')) ||
-                (isClockedIn && !canClockOut)
+                (isClockedIn && isBeforeClockOut)
               }
               title={
                 !isShiftOpen && !isClockedIn
                   ? 'Shift opens at 09:55 AM'
-                  : isAbsentLocked && !isClockedIn
-                  ? 'Clock-in closed at 2:15 PM — marked Absent'
                   : !isClockedIn && (!location.canClockIn || location.status !== 'gps_ok')
                   ? location.label
-                  : (isClockedIn && !canClockOut ? 'Clock-out opens at 6:00 PM. Use Request Early Leave for an early exit.' : '')
+                  : (isClockedIn && isBeforeClockOut ? 'Clock-out opens at 06:45 PM. Use Request Early Leave for early exit.' : '')
               }
             >
               {actionLoading ? (
                 <span className="spinner" style={{ width: 32, height: 32 }} />
               ) : (
                 <>
-                  {/* Hand Touch Icon */}
                   <svg className="orb-icon" width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0" />
                     <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v6" />
                     <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" />
                     <path d="M18 8a2 2 0 0 1 2 2v4a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.8-5.6-2.4l-2.7-4c-.4-.6-.4-1.4.1-1.9v0c.5-.5 1.4-.5 1.9-.1L7 11.5" />
                   </svg>
-                  <span className="orb-text">{isClockedIn ? 'CLOCK OUT' : 'CLOCK IN'}</span>
+                  <span className="orb-text">
+                    {isClockedIn
+                      ? (isAfterClockOut ? 'CLOCK OUT (LATE)' : 'CLOCK OUT')
+                      : (isAfterEleven ? 'REQUEST CLOCK IN' : 'CLOCK IN')}
+                  </span>
                 </>
               )}
             </button>
@@ -353,7 +404,6 @@ export default function DashboardPage() {
                           : s === 'checking'     ? '#64748B'
                           : '#B91C1C';
 
-          // Animated dot for checking state
           const dotAnim = s === 'checking' ? 'pulse 1.2s ease-in-out infinite' : 'none';
 
           return (
@@ -362,7 +412,6 @@ export default function DashboardPage() {
                 className="location-tag"
                 style={{ background: bgColor, borderColor, padding: '8px 16px', gap: 8 }}
               >
-                {/* Dot indicator */}
                 <div style={{
                   width: 9, height: 9, borderRadius: '50%',
                   background: dotColor,
@@ -371,12 +420,10 @@ export default function DashboardPage() {
                   animation: dotAnim,
                 }} />
 
-                {/* Status label */}
                 <span style={{ color: textColor, fontWeight: 800, fontSize: 12 }}>
                   {location.label}
                 </span>
 
-                {/* Refresh button */}
                 <button
                   onClick={location.refresh}
                   disabled={s === 'checking'}
@@ -411,14 +458,12 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              {/* Out of range / error notice */}
               {(s === 'out_of_range' || s === 'error') && !isClockedIn && (
                 <span style={{ fontSize: 10.5, color: '#991B1B', background: '#FEE2E2', padding: '3px 12px', borderRadius: 20, fontWeight: 700 }}>
                   🚫 You must be inside the office location range to clock in
                 </span>
               )}
 
-              {/* GPS distance sub-label */}
               {s === 'gps_ok' && location.distanceMeters !== null && (
                 <span style={{ fontSize: 10, color: '#059669', letterSpacing: 0.3, fontWeight: 700 }}>
                   {location.distanceMeters}m from office · GPS verified
@@ -460,15 +505,15 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Early Leave Request Option positioned under Total Sales & Leads Assigned */}
-            {!canClockOut && (
+            {/* Early Leave Request Option (Before 6:45 PM) */}
+            {isBeforeClockOut && (
               <div style={{ marginTop: 12, textAlign: 'center' }}>
                 <button
                   type="button"
                   className="early-leave-request-btn"
                   onClick={() => setShowEarlyLeaveModal(true)}
                 >
-                  <span>🏃‍♂️</span> Request Early Leave (Before 6 PM)
+                  <span>🏃‍♂️</span> Request Early Leave (Before 06:45 PM)
                 </button>
               </div>
             )}
@@ -498,7 +543,64 @@ export default function DashboardPage() {
 
       </div>
 
-      {/* Early Leave Request Modal */}
+      {/* Late Clock-In Request Modal (After 11:00 AM) */}
+      {showLateClockInModal && (
+        <div className="modal-backdrop" onClick={() => setShowLateClockInModal(false)}>
+          <div className="modal-card" style={{ maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ fontSize: 17, fontWeight: 700, color: '#0F172A' }}>
+                Late Clock-In Approval Request
+              </h3>
+              <button className="modal-close" onClick={() => setShowLateClockInModal(false)}>✕</button>
+            </div>
+            
+            <div style={{ padding: '16px 0' }}>
+              <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+                <span style={{ fontSize: 13, color: '#92400E', fontWeight: 600 }}>
+                  ⚠️ Clock-in closed at 11:00 AM. Your request will be sent to the Manager. If accepted, you will be allowed; if rejected, you will be marked Absent.
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 4, display: 'block' }}>
+                  Reason for Late Clock-In (Optional)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="e.g., Traffic delay / Doctor visit / Client meeting"
+                  value={lateClockInReason}
+                  onChange={e => setLateClockInReason(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: '1px solid #CBD5E1',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="modal-actions" style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowLateClockInModal(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ background: '#4F46E5', borderColor: '#4F46E5' }}
+                onClick={() => executeClockIn(lateClockInReason)}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'Submitting...' : 'Submit to Manager'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Early Leave Request Modal (Before 6:45 PM) */}
       {showEarlyLeaveModal && (
         <div className="modal-backdrop" onClick={() => setShowEarlyLeaveModal(false)}>
           <div className="modal-card" style={{ maxWidth: 440 }} onClick={e => e.stopPropagation()}>
@@ -511,7 +613,7 @@ export default function DashboardPage() {
             
             <div style={{ padding: '16px 0' }}>
               <p style={{ fontSize: 13, color: '#64748B', marginBottom: 14 }}>
-                You are logging out before 6:00 PM. This request will be sent to the Admin Panel for <strong>Half Day</strong> approval. If not approved past 6:00 PM, it will be marked as <strong>Absent</strong>.
+                You are logging out before <strong>06:45 PM</strong>. This request will be sent to the Manager Portal for <strong>Half Day</strong> approval. If rejected, it will be marked as <strong>Absent</strong>.
               </p>
 
               <div className="form-group">
@@ -556,4 +658,5 @@ export default function DashboardPage() {
     </div>
   );
 }
+
 

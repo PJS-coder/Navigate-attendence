@@ -6,16 +6,17 @@
  * as private IPs (192.168.x.x) are not visible to cloud servers.
  */
 
-const OFFICE_LAT      = parseFloat(process.env.OFFICE_LAT      ?? '28.6345');
-const OFFICE_LNG      = parseFloat(process.env.OFFICE_LNG      ?? '77.285549');
-const OFFICE_RADIUS_M = parseInt(process.env.OFFICE_RADIUS_METERS ?? '150', 10);
+const OFFICE_LAT      = parseFloat(process.env.OFFICE_LAT      ?? '28.7092935');
+const OFFICE_LNG      = parseFloat(process.env.OFFICE_LNG      ?? '77.1234043');
+const OFFICE_RADIUS_M = parseInt(process.env.OFFICE_RADIUS_METERS ?? '200', 10);
 
 export async function GET() {
   return Response.json({
     office: {
       lat:          OFFICE_LAT,
       lng:          OFFICE_LNG,
-      radiusMeters: OFFICE_RADIUS_M,
+      radiusMeters: Math.max(OFFICE_RADIUS_M, 150),
     },
   });
 }
+

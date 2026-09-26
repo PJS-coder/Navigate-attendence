@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { signToken } from '@/lib/auth';
+import { signToken, getAuthUser } from '@/lib/auth';
 
 const Schema = z.object({
   email: z.string().email(),
@@ -18,6 +18,15 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return Response.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 });
 
   const { email, password, name, officeSsid, hourlyRate, role } = parsed.data;
+
+  // Security guard: Prevent unauthorized admin creation through public register endpoint
+  if (role === 'ADMIN') {
+    const authUser = getAuthUser(req);
+    if (!authUser || authUser.role !== 'ADMIN') {
+      return Response.json({ error: 'Only admins can register an admin account' }, { status: 403 });
+    }
+  }
+
   try {
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return Response.json({ error: 'Email already registered' }, { status: 409 });

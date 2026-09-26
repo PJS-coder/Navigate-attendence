@@ -13,6 +13,12 @@ const Schema = z.object({
   reason: z.string().optional(),
 });
 
+// Time thresholds (IST)
+const CLOCK_OUT_OPEN  = { h: 18, m: 45 }; // 06:45 PM
+const CLOCK_OUT_CLOSE = { h: 19, m: 15 }; // 07:15 PM
+
+function toMinutes(h: number, m: number) { return h * 60 + m; }
+
 export async function POST(req: NextRequest) {
   const authUser = getAuthUser(req);
   if (!authUser) return unauthorized();
@@ -32,27 +38,49 @@ export async function POST(req: NextRequest) {
 
     const totalMinutes = differenceInMinutes(now, record.clockIn);
     const totalHours = parseFloat((totalMinutes / 60).toFixed(2));
-    const { hour } = getISTTimeParts(now);
+    const { totalMinutes: nowMin, hour, minute } = getISTTimeParts(now);
+    const timeString = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 
-    // Clock-out opens at exactly 18:00 (6:00 PM IST)
-    const beforeClockOutWindow = hour < 18;
-    const isEarlyDeparture = beforeClockOutWindow || isEarlyLeave;
+    const openMin  = toMinutes(CLOCK_OUT_OPEN.h, CLOCK_OUT_OPEN.m);   // 18:45 (1125 mins)
+    const closeMin = toMinutes(CLOCK_OUT_CLOSE.h, CLOCK_OUT_CLOSE.m); // 19:15 (1155 mins)
 
-    // Block clock-out entirely before 6:00 PM unless it's a flagged early-leave
-    if (beforeClockOutWindow && !isEarlyLeave) {
+    const isBeforeOpen = nowMin < openMin;
+    const isAfterClose = nowMin > closeMin;
+
+    // Block direct clock-out before 6:45 PM unless requested via early-leave
+    if (isBeforeOpen && !isEarlyLeave) {
       return Response.json(
-        { error: 'Clock-out opens at 6:00 PM. Use "Request Early Leave" to submit a Half Day request before then.' },
+        { error: 'Clock-out opens at 06:45 PM. Use "Request Early Leave" to submit an early departure request before then.' },
         { status: 400 }
       );
     }
 
-    let halfDayApproval: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' = 'NONE';
+    let halfDayApproval: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' = record.halfDayApproval;
+    let halfDayReason: string | null = record.halfDayReason;
     let status = record.status;
     let message = `Clocked out successfully — Sales ₹${salesRevenue} logged.`;
 
-    if (isEarlyDeparture) {
+    if (isBeforeOpen) {
+      // Early leave before 6:45 PM
       halfDayApproval = 'PENDING';
-      message = 'Early leave request submitted to Admin! Pending approval.';
+      halfDayReason = reason
+        ? `Early Leave (Before 6:45 PM at ${timeString}): ${reason}`
+        : `Early Leave request before 06:45 PM (at ${timeString})`;
+      message = 'Early leave request submitted to Manager! Pending approval.';
+    } else if (isAfterClose) {
+      // Late clock-out after 7:15 PM
+      halfDayApproval = 'PENDING';
+      halfDayReason = reason
+        ? `Late Clock-Out (After 7:15 PM at ${timeString}): ${reason}`
+        : `Late Clock-Out request after 07:15 PM (at ${timeString})`;
+      message = 'Late clock-out request submitted to Manager for approval (after 7:15 PM).';
+    } else {
+      // Normal on-time clock-out window (6:45 PM – 7:15 PM)
+      // Retain approval status if already pending from morning late clock-in
+      if (record.halfDayApproval !== 'PENDING') {
+        halfDayApproval = 'NONE';
+      }
+      message = `Clocked out on time (${timeString}) — Sales ₹${salesRevenue} logged.`;
     }
 
     const updated = await prisma.attendance.update({
@@ -64,14 +92,16 @@ export async function POST(req: NextRequest) {
         salesRevenue,
         leadsAssigned: leadsAssigned ?? 0,
         halfDayApproval,
-        halfDayReason: isEarlyDeparture ? (reason || 'Requested early leave before 6:00 PM') : null,
+        halfDayReason,
       },
     });
 
     return Response.json({
       success: true,
       attendance: updated,
-      isEarlyDeparture,
+      isEarlyDeparture: isBeforeOpen,
+      isLateClockOut: isAfterClose,
+      pendingApproval: halfDayApproval === 'PENDING',
       message,
     });
   } catch (err) {

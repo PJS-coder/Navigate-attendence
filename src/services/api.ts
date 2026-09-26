@@ -5,7 +5,7 @@ import axios, { AxiosError } from 'axios';
 
 export const api = axios.create({
   baseURL: '/api',
-  timeout: 15_000,
+  timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 });
 

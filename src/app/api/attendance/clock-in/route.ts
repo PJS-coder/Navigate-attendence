@@ -1,9 +1,6 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import {
-  differenceInMinutes, parseISO, set,
-  startOfMonth, endOfMonth,
-} from 'date-fns';
+import { differenceInMinutes, parseISO, set } from 'date-fns';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, unauthorized } from '@/lib/auth';
 import { getTodayISTDate, getISTTimeParts } from '@/lib/dateUtils';
@@ -12,21 +9,23 @@ import { getTodayISTDate, getISTTimeParts } from '@/lib/dateUtils';
  * POST /api/attendance/clock-in
  *
  * Time windows (IST):
- *   Before 09:55        → Shift not open yet
- *   09:55 – 10:14       → PRESENT (on-time / late-but-relaxation)
- *   10:15 – 14:14       → HALF_DAY automatically
- *   14:15 and after     → Too late — return 423 (Absent locked)
+ *   Before 09:55        → Shift not open yet (Error 400)
+ *   09:55 – 10:30       → PRESENT (On-time clock-in)
+ *   10:30 – 11:00       → HALF_DAY (Automatically marked Half Day)
+ *   11:00 and after     → Clock-in closed; Approval request sent to Manager (PENDING)
+ *                         If manager accepts → marked HALF_DAY / PRESENT
+ *                         If manager rejects → marked ABSENT
  */
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const OFFICE_LAT    = parseFloat(process.env.OFFICE_LAT            ?? '28.6345');
-const OFFICE_LNG    = parseFloat(process.env.OFFICE_LNG            ?? '77.285549');
-const OFFICE_RADIUS = parseInt(process.env.OFFICE_RADIUS_METERS    ?? '150', 10);
+const OFFICE_LAT    = parseFloat(process.env.OFFICE_LAT            ?? '28.7092935');
+const OFFICE_LNG    = parseFloat(process.env.OFFICE_LNG            ?? '77.1234043');
+const OFFICE_RADIUS = parseInt(process.env.OFFICE_RADIUS_METERS    ?? '200', 10);
 
 // Time thresholds (hours + minutes)
-const SHIFT_OPEN      = { h: 9,  m: 55 };  // 09:55 — earliest allowed clock-in
-const HALF_DAY_AFTER  = { h: 10, m: 15 };  // 10:15 — auto half-day
-const ABSENT_AFTER    = { h: 14, m: 15 };  // 14:15 — no clock-in, marked absent
+const SHIFT_OPEN      = { h: 9,  m: 55 }; // 09:55 — earliest allowed clock-in
+const PRESENT_UNTIL   = { h: 10, m: 30 }; // 10:30 — on-time clock-in closes
+const HALF_DAY_UNTIL  = { h: 11, m: 0  }; // 11:00 — half-day closes, manager approval required after
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -48,6 +47,7 @@ const Schema = z.object({
   method: z.enum(['gps']),
   lat: z.number({ required_error: 'GPS latitude is required' }),
   lng: z.number({ required_error: 'GPS longitude is required' }),
+  reason: z.string().optional(),
 });
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -58,48 +58,32 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const parsed = Schema.safeParse(body);
   if (!parsed.success) {
-    return Response.json({ error: 'Location verification failed. Valid GPS coordinates are required to clock in.', details: parsed.error.flatten() }, { status: 400 });
-  }
-
-  const { timestamp, method, lat, lng } = parsed.data;
-  const now   = parseISO(timestamp);
-  const today = getTodayISTDate(now);
-
-  const { totalMinutes: nowMin } = getISTTimeParts(now);
-
-  // ── 1. Shift window gate ───────────────────────────────────────────────────
-  if (nowMin < toMinutes(SHIFT_OPEN.h, SHIFT_OPEN.m)) {
     return Response.json(
-      { error: `Shift opens at ${SHIFT_OPEN.h}:${String(SHIFT_OPEN.m).padStart(2,'0')} AM. You cannot clock in yet.` },
+      { error: 'Location verification failed. Valid GPS coordinates are required to clock in.', details: parsed.error.flatten() },
       { status: 400 }
     );
   }
 
-  // ── 2. Absent cutoff gate ─────────────────────────────────────────────────
-  if (nowMin >= toMinutes(ABSENT_AFTER.h, ABSENT_AFTER.m)) {
-    // Create / update an ABSENT record so it appears on the timesheet
-    try {
-      const user = await prisma.user.findUnique({ where: { id: authUser.userId } });
-      if (!user) return Response.json({ error: 'User not found' }, { status: 404 });
+  const { timestamp, lat, lng, reason } = parsed.data;
+  const now   = parseISO(timestamp);
+  const today = getTodayISTDate(now);
 
-      await prisma.attendance.upsert({
-        where:  { userId_date: { userId: authUser.userId, date: today } },
-        update: { status: 'ABSENT' },
-        create: { userId: authUser.userId, date: today, status: 'ABSENT', isLate: false, lateMinutes: 0 },
-      });
-    } catch { /* non-critical — ignore */ }
+  const { totalMinutes: nowMin, hour, minute } = getISTTimeParts(now);
 
+  // ── 1. Shift window gate: Before 09:55 AM ──────────────────────────────────
+  if (nowMin < toMinutes(SHIFT_OPEN.h, SHIFT_OPEN.m)) {
     return Response.json(
-      { error: `Clock-in window closed at ${ABSENT_AFTER.h}:${String(ABSENT_AFTER.m).padStart(2,'0')} PM. You have been marked Absent for today.`, absent: true },
-      { status: 423 }  // 423 Locked — custom signal for the UI
+      { error: `Shift opens at 09:55 AM. You cannot clock in yet.` },
+      { status: 400 }
     );
   }
 
-  // ── 3. Server-side GPS radius verification ─────────────────────────────────
+  // ── 2. Server-side GPS radius verification ─────────────────────────────────
   const distance = haversineDistance(lat, lng, OFFICE_LAT, OFFICE_LNG);
-  if (distance > OFFICE_RADIUS) {
+  const allowedRadius = Math.max(OFFICE_RADIUS, 180);
+  if (distance > allowedRadius) {
     return Response.json(
-      { error: `Clock-in failed: You are ${Math.round(distance)}m away from the office. You must be within ${OFFICE_RADIUS}m to clock in.` },
+      { error: `Clock-in failed: You are ${Math.round(distance)}m away from the office. You must be within ${allowedRadius}m to clock in.` },
       { status: 400 }
     );
   }
@@ -107,7 +91,7 @@ export async function POST(req: NextRequest) {
   const verificationMethod = 'gps';
   const wifiVerified = true;
 
-  // ── 4. Business logic ─────────────────────────────────────────────────────
+  // ── 3. Business logic based on time windows ────────────────────────────────
   try {
     const user = await prisma.user.findUnique({ where: { id: authUser.userId } });
     if (!user) return Response.json({ error: 'User not found' }, { status: 404 });
@@ -119,37 +103,73 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'Already clocked in today' }, { status: 400 });
     }
 
-    const isHalfDay    = nowMin >= toMinutes(HALF_DAY_AFTER.h, HALF_DAY_AFTER.m);
-    const shiftStart   = set(today, { hours: SHIFT_OPEN.h, minutes: SHIFT_OPEN.m, seconds: 0 });
-    const lateMinutes  = now > shiftStart ? differenceInMinutes(now, shiftStart) : 0;
+    const timeString = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    let status: 'PRESENT' | 'HALF_DAY' | 'ABSENT' = 'PRESENT';
+    let halfDayApproval: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' = 'NONE';
+    let halfDayReason: string | null = null;
+    let isLate = false;
+    let lateMinutes = 0;
+    let message = 'Clocked in successfully (On Time ✓)';
 
-    const monthRecords = await prisma.attendance.findMany({
-      where: { userId: authUser.userId, date: { gte: startOfMonth(today), lte: endOfMonth(today) } },
-    });
-    const totalPrevLate  = monthRecords.reduce((a, r) => a + (r.lateMinutes || 0), 0);
-    const relaxationDone = (totalPrevLate + lateMinutes) > 240;
-
-    let status: 'PRESENT' | 'HALF_DAY' = 'PRESENT';
-    let message = 'Clocked in on time ✓';
-
-    if (isHalfDay) {
-      status  = 'HALF_DAY';
-      message = `Clocked in after ${HALF_DAY_AFTER.h}:${String(HALF_DAY_AFTER.m).padStart(2,'0')} AM — marked Half Day`;
-    } else if (relaxationDone && lateMinutes > 0) {
-      status  = 'HALF_DAY';
-      message = `Late (${lateMinutes}m) — relaxation exhausted, Half Day`;
-    } else if (lateMinutes > 0) {
-      const remainMins = Math.max(0, 240 - (totalPrevLate + lateMinutes));
-      message = `Late by ${lateMinutes}m — ${(remainMins / 60).toFixed(1)} hrs relaxation left`;
+    if (nowMin < toMinutes(PRESENT_UNTIL.h, PRESENT_UNTIL.m)) {
+      // 09:55 AM – 10:30 AM: On-Time clock in -> PRESENT
+      status = 'PRESENT';
+      halfDayApproval = 'NONE';
+      isLate = false;
+      lateMinutes = 0;
+      message = 'Clocked in on time ✓';
+    } else if (nowMin < toMinutes(HALF_DAY_UNTIL.h, HALF_DAY_UNTIL.m)) {
+      // 10:30 AM – 11:00 AM: Automatic HALF_DAY
+      status = 'HALF_DAY';
+      halfDayApproval = 'NONE';
+      isLate = true;
+      lateMinutes = nowMin - toMinutes(PRESENT_UNTIL.h, PRESENT_UNTIL.m);
+      message = `Clocked in at ${timeString} (after 10:30 AM) — automatically marked Half Day.`;
+    } else {
+      // After 11:00 AM: Requires Manager Approval
+      status = 'ABSENT'; // Default until manager approves
+      halfDayApproval = 'PENDING';
+      halfDayReason = reason
+        ? `Late Clock-In (After 11:00 AM at ${timeString}): ${reason}`
+        : `Late Clock-In request after 11:00 AM (at ${timeString})`;
+      isLate = true;
+      lateMinutes = nowMin - toMinutes(PRESENT_UNTIL.h, PRESENT_UNTIL.m);
+      message = `Clock-in window closed at 11:00 AM. Approval request sent to Manager!`;
     }
 
     const attendance = await prisma.attendance.upsert({
       where:  { userId_date: { userId: authUser.userId, date: today } },
-      update: { clockIn: now, status, isLate: lateMinutes > 0, lateMinutes, wifiVerified, verificationMethod },
-      create: { userId: authUser.userId, date: today, clockIn: now, status, isLate: lateMinutes > 0, lateMinutes, wifiVerified, verificationMethod },
+      update: {
+        clockIn: now,
+        status,
+        halfDayApproval,
+        halfDayReason,
+        isLate,
+        lateMinutes,
+        wifiVerified,
+        verificationMethod,
+      },
+      create: {
+        userId: authUser.userId,
+        date: today,
+        clockIn: now,
+        status,
+        halfDayApproval,
+        halfDayReason,
+        isLate,
+        lateMinutes,
+        wifiVerified,
+        verificationMethod,
+      },
     });
 
-    return Response.json({ success: true, attendance, message, verificationMethod });
+    return Response.json({
+      success: true,
+      attendance,
+      message,
+      verificationMethod,
+      pendingApproval: halfDayApproval === 'PENDING',
+    });
   } catch (err) {
     return Response.json({ error: 'Clock-in failed', details: String(err) }, { status: 500 });
   }

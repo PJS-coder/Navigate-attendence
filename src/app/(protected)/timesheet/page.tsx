@@ -78,7 +78,7 @@ export default function TimesheetPage() {
   const todayObj = new Date();
   const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
   const nowTotalMin = todayObj.getHours() * 60 + todayObj.getMinutes();
-  const isPast215PM = nowTotalMin >= 14 * 60 + 15;
+  const isPastShiftClose = nowTotalMin >= 19 * 60 + 15; // 07:15 PM
 
   // Calendar Calculation
   const calendarDays = useMemo(() => {
@@ -100,10 +100,10 @@ export default function TimesheetPage() {
 
       let rec = recordMap.get(dStr);
 
-      // Mark unclocked past working days (or today past 2:15 PM) as ABSENT
+      // Mark unclocked past working days (or today past 7:15 PM) as ABSENT
       if (!rec && !isSunday) {
         const isPast = dStr < todayStr;
-        const isTodayCutoff = dStr === todayStr && isPast215PM;
+        const isTodayCutoff = dStr === todayStr && isPastShiftClose;
 
         if (isPast || isTodayCutoff) {
           rec = {
@@ -131,7 +131,7 @@ export default function TimesheetPage() {
     }
 
     return days;
-  }, [year, month, recordMap, todayStr, isPast215PM]);
+  }, [year, month, recordMap, todayStr, isPastShiftClose]);
 
   // Combined list of records including auto-absent days for table & legend
   const effectiveRecords = useMemo(() => {

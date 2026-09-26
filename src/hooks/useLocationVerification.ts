@@ -1,10 +1,10 @@
 /**
- * useLocationVerification
+ * useLocationVerification.ts
  *
- * Fast & efficient office location verification for web:
- *  1. Cached office coordinates & fast 5s geolocation lookups
- *  2. Prevents concurrent / infinite re-verification loops
- *  3. Single-shot background checks every 60s
+ * Fast, robust & real-time high-accuracy office GPS verification:
+ *  1. Immediate dual-speed GPS lock (High Accuracy + instant fallback)
+ *  2. Continuous real-time location watch (watchPosition) for zero-lag updates
+ *  3. Indoor accuracy buffer to eliminate false "out of range" errors in buildings
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -17,14 +17,14 @@ export interface LocationVerificationResult {
   status:          VerificationStatus;
   method:          VerificationMethod;
   distanceMeters:  number | null;
-  coords:          { lat: number; lng: number } | null;
+  coords:          { lat: number; lng: number; accuracy?: number } | null;
   label:           string;
   canClockIn:      boolean;
   gpsPermission:   GpsPermission;
   refresh:         () => void;
 }
 
-// ── Haversine distance (returns metres) ──────────────────────────────────────
+// ── Haversine distance in meters ──────────────────────────────────────────────
 function haversineDistance(
   lat1: number, lng1: number,
   lat2: number, lng2: number,
@@ -38,133 +38,177 @@ function haversineDistance(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+const DEFAULT_OFFICE = {
+  lat: 28.7092935,
+  lng: 77.1234043,
+  radiusMeters: 200,
+};
+
 export function useLocationVerification(): LocationVerificationResult {
   const [status,         setStatus]         = useState<VerificationStatus>('checking');
   const [method,         setMethod]         = useState<VerificationMethod>(null);
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
-  const [coords,         setCoords]         = useState<{ lat: number; lng: number } | null>(null);
-  const [label,          setLabel]          = useState('Checking location…');
+  const [coords,         setCoords]         = useState<{ lat: number; lng: number; accuracy?: number } | null>(null);
+  const [label,          setLabel]          = useState('Detecting office location…');
   const [gpsPermission,  setGpsPermission]  = useState<GpsPermission>('checking');
 
-  const isVerifyingRef  = useRef(false);
-  const officeCoordsRef = useRef<{ lat: number; lng: number; radiusMeters: number } | null>(null);
+  const officeCoordsRef = useRef<{ lat: number; lng: number; radiusMeters: number }>(DEFAULT_OFFICE);
+  const watchIdRef      = useRef<number | null>(null);
+  const isFetchingRef   = useRef<boolean>(false);
 
-  // ── Main Verification Procedure ───────────────────────────────────────────
-  const verify = useCallback(async (isManualRefresh = false) => {
-    if (isVerifyingRef.current) return;
-    isVerifyingRef.current = true;
-
-    if (isManualRefresh) {
-      setStatus('checking');
-      setLabel('Checking location…');
-    }
-
-    // 1. Fetch office GPS coordinates (cached after first fetch)
-    const defaultOffice = { lat: 28.709200, lng: 77.123309, radiusMeters: 150 };
-    if (!officeCoordsRef.current) {
-      try {
-        const res  = await fetch('/api/location/verify');
-        const data = await res.json();
-        if (data.office) officeCoordsRef.current = data.office;
-      } catch {
-        officeCoordsRef.current = defaultOffice;
-      }
-    }
-    const officeCoords = officeCoordsRef.current || defaultOffice;
-
-    // Check secure context for mobile devices over HTTP IP
-    if (typeof window !== 'undefined' && !window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-      setGpsPermission('unsupported');
-      setStatus('error');
-      setMethod(null);
-      setLabel('⚠️ GPS requires HTTPS or localhost on mobile browsers');
-      isVerifyingRef.current = false;
-      return;
-    }
-
-    // 2. Query GPS
-    const gpsSupported = typeof navigator !== 'undefined' && 'geolocation' in navigator;
-
-    if (gpsSupported) {
-      try {
-        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: false, // Faster lock without high-accuracy battery drain
-            timeout: 5000,             // 5s max timeout
-            maximumAge: 60000,         // Use cached position if < 60s old
-          });
-        });
-
-        setGpsPermission('granted');
-
-        const userLat  = position.coords.latitude;
-        const userLng  = position.coords.longitude;
-        const distance = haversineDistance(userLat, userLng, officeCoords.lat, officeCoords.lng);
-
-        setCoords({ lat: userLat, lng: userLng });
-        setDistanceMeters(Math.round(distance));
-
-        if (distance <= officeCoords.radiusMeters) {
-          setStatus('gps_ok');
-          setMethod('gps');
-          setLabel(`📍 GPS: At Office (${Math.round(distance)}m away)`);
-        } else {
-          setStatus('out_of_range');
-          setMethod(null);
-          setLabel(`🔴 Outside office range (${Math.round(distance)}m away) — Clock-in disabled`);
+  // 1. Fetch server office coordinates once
+  useEffect(() => {
+    let mounted = true;
+    fetch('/api/location/verify')
+      .then(res => res.json())
+      .then(data => {
+        if (mounted && data.office) {
+          officeCoordsRef.current = {
+            lat: Number(data.office.lat) || DEFAULT_OFFICE.lat,
+            lng: Number(data.office.lng) || DEFAULT_OFFICE.lng,
+            radiusMeters: Math.max(Number(data.office.radiusMeters) || 150, 150),
+          };
         }
-      } catch (err: unknown) {
-        if (err instanceof GeolocationPositionError && err.code === GeolocationPositionError.PERMISSION_DENIED) {
-          setGpsPermission('denied');
-        }
-        setStatus('error');
-        setMethod(null);
-        setLabel('🔴 Location required to clock in');
-      } finally {
-        isVerifyingRef.current = false;
-      }
+      })
+      .catch(() => {
+        // Keep default
+      });
+    return () => { mounted = false; };
+  }, []);
+
+  // 2. Process incoming GPS position
+  const processPosition = useCallback((pos: GeolocationPosition) => {
+    setGpsPermission('granted');
+    const userLat = pos.coords.latitude;
+    const userLng = pos.coords.longitude;
+    const accuracy = pos.coords.accuracy;
+
+    const office = officeCoordsRef.current;
+    const rawDistance = haversineDistance(userLat, userLng, office.lat, office.lng);
+    const roundedDist = Math.round(rawDistance);
+
+    // Apply smart accuracy margin for indoor / concrete building signal loss
+    const margin = accuracy > 0 && accuracy < 100 ? accuracy * 0.35 : 0;
+    const effectiveDistance = Math.max(0, rawDistance - margin);
+
+    setCoords({ lat: userLat, lng: userLng, accuracy: Math.round(accuracy) });
+    setDistanceMeters(roundedDist);
+
+    if (effectiveDistance <= office.radiusMeters || rawDistance <= office.radiusMeters) {
+      setStatus('gps_ok');
+      setMethod('gps');
+      setLabel(`🟢 At Office (${roundedDist}m away · GPS Verified)`);
     } else {
-      setGpsPermission('unsupported');
-      setStatus('error');
+      setStatus('out_of_range');
       setMethod(null);
-      isVerifyingRef.current = false;
+      setLabel(`🔴 Outside office range (${roundedDist}m away) — Clock-in disabled`);
     }
   }, []);
 
-  // ── Watch browser GPS permission via Permissions API ─────────────────────
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !('permissions' in navigator)) {
+  // 3. Fast Geolocation Request (High Accuracy with instant fallback)
+  const acquirePosition = useCallback(() => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) {
       setGpsPermission('unsupported');
+      setStatus('error');
+      setLabel('⚠️ Geolocation not supported on this browser');
       return;
     }
 
-    let mounted = true;
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
 
+    // Fast attempt: High Accuracy
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        isFetchingRef.current = false;
+        processPosition(pos);
+      },
+      (err) => {
+        // On timeout or high-accuracy failure, retry immediately with standard accuracy
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            isFetchingRef.current = false;
+            processPosition(pos);
+          },
+          (fallbackErr) => {
+            isFetchingRef.current = false;
+            if (fallbackErr.code === fallbackErr.PERMISSION_DENIED) {
+              setGpsPermission('denied');
+              setStatus('error');
+              setLabel('🔒 Location permission denied. Please allow location access.');
+            } else {
+              setStatus('error');
+              setLabel('⚠️ Could not get accurate location. Tap refresh to retry.');
+            }
+          },
+          {
+            enableHighAccuracy: false,
+            timeout: 5000,
+            maximumAge: 30000,
+          }
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 6000,
+        maximumAge: 10000,
+      }
+    );
+  }, [processPosition]);
+
+  // 4. Start active watchPosition for real-time live GPS streaming
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) return;
+
+    acquirePosition();
+
+    try {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          processPosition(pos);
+        },
+        () => {
+          // Silent catch in watcher to avoid interrupting existing position
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 5000,
+        }
+      );
+    } catch {
+      // Ignore
+    }
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, [acquirePosition, processPosition]);
+
+  // 5. Watch permissions change
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('permissions' in navigator)) return;
+
+    let mounted = true;
     navigator.permissions.query({ name: 'geolocation' }).then((permStatus) => {
       if (!mounted) return;
       setGpsPermission(permStatus.state as GpsPermission);
 
-      const onChange = () => {
+      const handleChange = () => {
         if (!mounted) return;
         setGpsPermission(permStatus.state as GpsPermission);
         if (permStatus.state === 'granted') {
-          verify(true);
+          acquirePosition();
         }
       };
-      permStatus.addEventListener('change', onChange);
-    }).catch(() => {
-      if (mounted) setGpsPermission('unsupported');
-    });
+
+      permStatus.addEventListener('change', handleChange);
+    }).catch(() => {});
 
     return () => { mounted = false; };
-  }, [verify]);
-
-  // ── Initial check & periodic 60s interval ─────────────────────────────────
-  useEffect(() => {
-    verify();
-    const interval = setInterval(() => verify(false), 60_000);
-    return () => clearInterval(interval);
-  }, [verify]);
+  }, [acquirePosition]);
 
   const canClockIn = status === 'gps_ok';
 
@@ -176,6 +220,10 @@ export function useLocationVerification(): LocationVerificationResult {
     label,
     canClockIn,
     gpsPermission,
-    refresh: () => verify(true),
+    refresh: () => {
+      setStatus('checking');
+      setLabel('Refetching GPS coordinates…');
+      acquirePosition();
+    },
   };
 }
